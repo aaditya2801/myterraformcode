@@ -1,33 +1,35 @@
+// aws configure :
+
 provider "aws" {
   region     = "ap-south-1"
   profile    = "mickey"
 }
 
-// Creating RSA key
+// RSA private key :
 
-variable "EC2_Key" {default="httpdserverkey"}
-resource "tls_private_key" "httpdkey" {
+variable "EC2_Key" {default="keyname111"}
+resource "tls_private_key" "mynewkey" {
   algorithm = "RSA"
   rsa_bits  = 4096
 }
 
-// Creating AWS key-pair
+// AWS key-pair :
 
 resource "aws_key_pair" "generated_key" {
   key_name   = var.EC2_Key
-  public_key = tls_private_key.httpdkey.public_key_openssh
+  public_key = tls_private_key.mynewkey.public_key_openssh
 }
 
-// Creating security group
+// security group :
 
-resource "aws_security_group" "httpdsecurity" {
+resource "aws_security_group" "mysg" {
 
 depends_on = [
     aws_key_pair.generated_key,
   ]
 
-  name         = "httpdsecurity"
-  description  = "allow ssh and httpd"
+  name         = "allow_http"
+  description  = "Allow http inbound traffic"
  
   ingress {
     description = "SSH Port"
@@ -37,7 +39,7 @@ depends_on = [
     cidr_blocks = ["0.0.0.0/0"]
   }
   ingress {
-    description = "HTTPD Port"
+    description = "http from VPC"
     from_port   = 80
     to_port     = 80
     protocol    = "tcp"
@@ -55,23 +57,23 @@ depends_on = [
   }
 }
 
-// Creating EC2 Instance and Installing Required Softwares in it.
+// EC2 Instance and configuring httpd,git,php in it :
 
-resource "aws_instance" "HttpdInstance" {
+resource "aws_instance" "myterraformos1" {
 
 depends_on = [
-    aws_security_group.httpdsecurity,
+    aws_security_group.mysg,
   ]
 
   ami           = "ami-0447a12f28fddb066"
   instance_type = "t2.micro"
   key_name      = var.EC2_Key
-  security_groups = [ "${aws_security_group.httpdsecurity.name}" ]
+  security_groups = [ "${aws_security_group.mysg.name}" ]
   connection {
     type     = "ssh"
     user     = "ec2-user"
-    private_key = tls_private_key.httpdkey.private_key_pem
-    host     = aws_instance.HttpdInstance.public_ip
+    private_key = tls_private_key.mynewkey.private_key_pem
+    host     = aws_instance.myterraformos1.public_ip
   }
   provisioner "remote-exec" {
     inline = [
@@ -82,40 +84,42 @@ depends_on = [
   }
 
   tags = {
-    Name = "HttpdServer1"
+    Name = "OSterraform"
   }
 }
 
-// Creating EBS volume and attaching it to EC2 Instance.
+// EBS volume :
 
-resource "aws_ebs_volume" "HttpdEBS" {
-  availability_zone = aws_instance.HttpdInstance.availability_zone
+resource "aws_ebs_volume" "volterraform" {
+  availability_zone = aws_instance.myterraformos1.availability_zone
   size              = 1
   tags = {
-    Name = "HttpdEBS"
+    Name = "volforterraform"
   }
 }
 
-resource "aws_volume_attachment" "EBSattach" {
+// mounting volume :
+
+resource "aws_volume_attachment" "attachvol" {
   device_name = "/dev/sdh"
-  volume_id   = aws_ebs_volume.HttpdEBS.id
-  instance_id = aws_instance.HttpdInstance.id
+  volume_id   = aws_ebs_volume.volterraform.id
+  instance_id = aws_instance.myterraformos1.id
   force_detach = true
 }
 
-// Mounting the Volume in EC2 Instance and Cloning GitHub files in Httpd Server
+// deploy github code in /var/www/html :
 
-resource "null_resource" "VolumeMount"  {
+resource "null_resource" "mountingvol"  {
 
 depends_on = [
-    aws_volume_attachment.EBSattach,
+    aws_volume_attachment.attachvol,
   ]
 
   connection {
     type     = "ssh"
     user     = "ec2-user"
-    private_key = tls_private_key.httpdkey.private_key_pem
-    host     = aws_instance.HttpdInstance.public_ip
+    private_key = tls_private_key.mynewkey.private_key_pem
+    host     = aws_instance.myterraformos1.public_ip
   }
 
 provisioner "remote-exec" {
@@ -128,26 +132,26 @@ provisioner "remote-exec" {
   }
 }
 
-// Creating S3 bucket.
+// S3 bucket :
 
-resource "aws_s3_bucket" "httpds3" {
-bucket = "addy-httpd-files"
+resource "aws_s3_bucket" "s3bucketjob1" {
+bucket = "mynewbucketforjob1"
 acl    = "public-read"
 }
 
-//Putting Objects in S3 Bucket
+// Putting Objects in mynewbucketforjob1 :
 
 resource "aws_s3_bucket_object" "s3_object" {
-  bucket = aws_s3_bucket.httpds3.bucket
+  bucket = aws_s3_bucket.s3bucketjob1.bucket
   key    = "snapcode.png"
   source = "C:/Users/Sharma/Desktop/snapcode.png"
   acl    = "public-read"
 }
 
-// Creating Cloud Front Distribution.
+// Cloud Front Distribution :
 
 locals {
-s3_origin_id = aws_s3_bucket.httpds3.id
+s3_origin_id = aws_s3_bucket.s3bucketjob1.id
 }
 
 resource "aws_cloudfront_distribution" "CloudFrontAccess" {
@@ -157,7 +161,7 @@ depends_on = [
   ]
 
 origin {
-domain_name = aws_s3_bucket.httpds3.bucket_regional_domain_name
+domain_name = aws_s3_bucket.s3bucketjob1.bucket_regional_domain_name
 origin_id   = local.s3_origin_id
 }
 
@@ -235,15 +239,15 @@ retain_on_delete = true
 
 // Changing the html code and adding the image url in that.
 
-resource "null_resource" "HtmlCodeChange"  {
+resource "null_resource" "addingurl"  {
 depends_on = [
     aws_cloudfront_distribution.CloudFrontAccess,
   ]
 connection {
     type     = "ssh"
     user     = "ec2-user"
-    private_key = tls_private_key.httpdkey.private_key_pem
-    host     = aws_instance.HttpdInstance.public_ip
+    private_key = tls_private_key.mynewkey.private_key_pem
+    host     = aws_instance.myterraformos1.public_ip
   }
   provisioner "remote-exec" {
     inline = [
@@ -252,27 +256,27 @@ connection {
   }
 }
 
-// Creating EBS snapshot volume.
+// EBS snapshot volume :
 
-resource "aws_ebs_snapshot" "httpd_snapshot" {
+resource "aws_ebs_snapshot" "snap1" {
 depends_on = [
-    null_resource.HtmlCodeChange,
+    null_resource.addingurl,
   ]
-  volume_id = aws_ebs_volume.HttpdEBS.id
+  volume_id = aws_ebs_volume.volterraform.id
 
   tags = {
-    Name = "Httpd_snap"
+    Name = "job1snap"
   }
 }
 
-// Finally opening the browser to that particular html site to see how It's working.
+// deploying webapp :
 
-resource "null_resource" "ChromeOpen"  {
+resource "null_resource" "deploywebapp"  {
 depends_on = [
-    aws_ebs_snapshot.httpd_snapshot,
+    aws_ebs_snapshot.snap1,
   ]
 
 	provisioner "local-exec" {
-	    command = "start chrome  ${aws_instance.HttpdInstance.public_ip}/index.html"
+	    command = "start chrome  ${aws_instance.myterraformos1.public_ip}/index.html"
   	}
 }
